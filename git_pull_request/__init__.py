@@ -187,7 +187,7 @@ def git_pull_request(target_remote=None, target_branch=None,
                      rebase=True,
                      force_editor=False,
                      download=None,
-                     ignore_tag=False):
+                     ignore_tag=False, no_fork=False):
     branch = git_get_branch_name()
     if not branch:
         LOG.critical("Unable to find current branch")
@@ -252,6 +252,11 @@ def git_pull_request(target_remote=None, target_branch=None,
 
     if download is not None:
         download_pull_request(g, repo, target_remote, download)
+    elif no_fork:
+        push_pull_request(g, repo, target_remote, rebase, target_remote,
+                          target_branch, branch, user, title, message,
+                          comment_on_update, comment,
+                          force_editor, ignore_tag)
     else:
         fork_and_push_pull_request(g, repo, rebase, target_remote,
                                    target_branch, branch, user, title, message,
@@ -354,8 +359,21 @@ def fork_and_push_pull_request(g, repo_to_fork, rebase, target_remote,
     else:
         remote_to_push = "github"
         _run_shell_command(
-            ["git", "remote", "add", remote_to_push, repo_forked.clone_url])
+            ["git", "remote", "add", remote_to_push, repo_to_fork.clone_url])
         LOG.info("Added forked repository as remote `%s'", remote_to_push)
+
+    push_pull_request(g, repo_forked, remote_to_push, rebase, target_remote,
+                      target_branch, branch, user, title, message,
+                      comment_on_update, comment,
+                      force_editor, ignore_tag)
+
+def push_pull_request(g, repo, remote_to_push, rebase, target_remote,
+                      target_branch, branch, user, title, message,
+                      comment_on_update, comment,
+                      force_editor, ignore_tag):
+    if not remote_to_push:
+        LOG.error("No remote to push")
+        return 35
 
     if rebase:
         _run_shell_command(["git", "remote", "update", target_remote])
@@ -386,8 +404,7 @@ def fork_and_push_pull_request(g, repo_to_fork, rebase, target_remote,
 
     _run_shell_command(["git", "push", "-f", remote_to_push, branch])
 
-    pulls = list(repo_to_fork.get_pulls(base=target_branch,
-                                        head=user + ":" + branch))
+    pulls = list(repo.get_pulls(base=target_branch, head=user + ":" + branch))
     if pulls:
         for pull in pulls:
             LOG.info("Pull-request updated:\n  %s", pull.html_url)
@@ -412,7 +429,7 @@ def fork_and_push_pull_request(g, repo_to_fork, rebase, target_remote,
                 comment = "Pull-request updated, HEAD is now %s" % branch_sha
             # FIXME(jd) we should be able to comment directly on a PR without
             # getting it as an issue but pygithub does not allow that yet
-            repo_to_fork.get_issue(pull.number).create_comment(comment)
+            repo.get_issue(pull.number).create_comment(comment)
             LOG.debug("Commented: \"%s\"", comment)
     else:
         # Create a pull request
@@ -433,11 +450,16 @@ def fork_and_push_pull_request(g, repo_to_fork, rebase, target_remote,
             LOG.critical("Pull-request message is empty, aborting")
             return 40
 
+        if remote_to_push == target_remote:
+            head = branch
+        else:
+            head = user + ":" + branch
+
         try:
-            pull = repo_to_fork.create_pull(base=target_branch,
-                                            head=user + ":" + branch,
-                                            title=title,
-                                            body=message)
+            pull = repo.create_pull(base=target_branch,
+                                    head=head,
+                                    title=title,
+                                    body=message)
         except github.GithubException as e:
             LOG.critical(
                 _format_github_exception("create pull request", e)
@@ -482,6 +504,9 @@ def main():
                         help="Title of the pull request.")
     parser.add_argument("--message", "-m",
                         help="Message of the pull request.")
+    parser.add_argument("--no-fork", "-F",
+                        action="store_true",
+                        help="Don't use fork, but the origin repository.")
     parser.add_argument("--no-rebase", "-R",
                         action="store_true",
                         help="Don't rebase branch before pushing.")
@@ -491,7 +516,7 @@ def main():
         default=False,
         help="Force editor to run to edit pull-request message.")
     parser.add_argument(
-        "--no-comment-on-update",
+        "--no-comment-on-update", "-n",
         action="store_true",
         default=False,
         help="Do not post a comment stating the pull-request has been updated."
@@ -529,7 +554,8 @@ def main():
             rebase=not args.no_rebase,
             force_editor=args.force_editor,
             download=args.download,
-            ignore_tag=args.no_tag_previous_revision
+            ignore_tag=args.no_tag_previous_revision,
+            no_fork=args.no_fork
         )
     except Exception as e:
         LOG.error("Unable to send pull request", exc_info=True)
