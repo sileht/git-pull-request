@@ -157,7 +157,7 @@ def git_get_log_titles(begin, end):
     return list(split_and_remove_empty_lines(log))
 
 
-def git_get_title_and_message(begin, end):
+def git_get_title_and_message(begin, end, no_template=False):
     """Get title and message summary for patches between 2 commits.
 
     :param begin: first commit to look at
@@ -166,12 +166,17 @@ def git_get_title_and_message(begin, end):
     """
     titles = git_get_log_titles(begin, end)
     title = "Pull request for " + end
+
+    message = None
     if len(titles) == 1:
         title = titles[0]
-    pr_template = find_pull_request_template()
-    if pr_template:
-        message = get_pr_template_message(pr_template)
-    else:
+
+    if no_template:
+        pr_template = find_pull_request_template()
+        if pr_template:
+            message = get_pr_template_message(pr_template)
+
+    if message is None:
         if len(titles) == 1:
             message = git_get_commit_body(end)
         else:
@@ -187,7 +192,9 @@ def git_pull_request(target_remote=None, target_branch=None,
                      rebase=True,
                      force_editor=False,
                      download=None,
-                     ignore_tag=False, no_fork=False):
+                     ignore_tag=False,
+                     no_fork=False,
+                     no_template=False):
     branch = git_get_branch_name()
     if not branch:
         LOG.critical("Unable to find current branch")
@@ -256,12 +263,12 @@ def git_pull_request(target_remote=None, target_branch=None,
         push_pull_request(g, repo, target_remote, rebase, target_remote,
                           target_branch, branch, user, title, message,
                           comment_on_update, comment,
-                          force_editor, ignore_tag)
+                          force_editor, ignore_tag, no_template)
     else:
         fork_and_push_pull_request(g, repo, rebase, target_remote,
                                    target_branch, branch, user, title, message,
                                    comment_on_update, comment,
-                                   force_editor, ignore_tag)
+                                   force_editor, ignore_tag, no_template)
 
 
 def download_pull_request(g, repo, target_remote, pull_number):
@@ -344,7 +351,7 @@ def preserve_older_revision(branch, remote_to_push):
 def fork_and_push_pull_request(g, repo_to_fork, rebase, target_remote,
                                target_branch, branch, user, title, message,
                                comment_on_update, comment,
-                               force_editor, ignore_tag):
+                               force_editor, ignore_tag, no_template):
 
     g_user = g.get_user()
 
@@ -365,12 +372,12 @@ def fork_and_push_pull_request(g, repo_to_fork, rebase, target_remote,
     push_pull_request(g, repo_forked, remote_to_push, rebase, target_remote,
                       target_branch, branch, user, title, message,
                       comment_on_update, comment,
-                      force_editor, ignore_tag)
+                      force_editor, ignore_tag, no_template)
 
 def push_pull_request(g, repo, remote_to_push, rebase, target_remote,
                       target_branch, branch, user, title, message,
                       comment_on_update, comment,
-                      force_editor, ignore_tag):
+                      force_editor, ignore_tag, no_template):
     if not remote_to_push:
         LOG.error("No remote to push")
         return 35
@@ -435,7 +442,7 @@ def push_pull_request(g, repo, remote_to_push, rebase, target_remote,
         # Create a pull request
         if force_editor or not (title and message):
             nb_of_commits, git_title, git_message = git_get_title_and_message(
-                "%s/%s" % (target_remote, target_branch), branch)
+                "%s/%s" % (target_remote, target_branch), branch, no_template)
             title = title or git_title
             message = message or git_message
             # Do not run an editor if there's only one commit or if both
@@ -504,6 +511,9 @@ def main():
                         help="Title of the pull request.")
     parser.add_argument("--message", "-m",
                         help="Message of the pull request.")
+    parser.add_argument("--no-template", "-T",
+                        action="store_true",
+                        help="Don't use project template.")
     parser.add_argument("--no-fork", "-F",
                         action="store_true",
                         help="Don't use fork, but the origin repository.")
@@ -555,7 +565,8 @@ def main():
             force_editor=args.force_editor,
             download=args.download,
             ignore_tag=args.no_tag_previous_revision,
-            no_fork=args.no_fork
+            no_fork=args.no_fork,
+            no_template=args.no_template
         )
     except Exception as e:
         LOG.error("Unable to send pull request", exc_info=True)
